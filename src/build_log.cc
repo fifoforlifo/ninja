@@ -114,6 +114,8 @@ bool BuildLog::OpenForWrite(const string& path, string* err) {
       return false;
   }
 
+  Close();
+
   log_file_ = fopen(path.c_str(), "ab");
   if (!log_file_) {
     *err = strerror(errno);
@@ -387,5 +389,6 @@ bool BuildLog::Recompact(const string& path, string* err) {
     return false;
   }
 
+  needs_recompaction_ = false;
   return true;
 }
