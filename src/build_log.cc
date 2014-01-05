@@ -145,23 +145,14 @@ bool BuildLog::RecordCommand(Edge* edge, int start_time, int end_time,
   for (vector<Node*>::iterator out = edge->outputs_.begin();
        out != edge->outputs_.end(); ++out) {
     const string& path = (*out)->path();
-    Entries::iterator i = entries_.find(path);
-    LogEntry* log_entry;
-    if (i != entries_.end()) {
-      log_entry = i->second;
-    } else {
-      log_entry = new LogEntry(path);
-      entries_.insert(Entries::value_type(log_entry->output, log_entry));
-    }
-    log_entry->command_hash = command_hash;
-    log_entry->start_time = start_time;
-    log_entry->end_time = end_time;
-    log_entry->restat_mtime = restat_mtime;
-
-    if (log_file_) {
-      if (!WriteEntry(log_file_, *log_entry))
-        return false;
-    }
+    if (!RecordEntry(path, start_time, end_time, restat_mtime, command_hash))
+      return false;
+  }
+  // treat deps as an output here
+  string depfile = edge->GetBinding("depfile");
+  if (!depfile.empty()) {
+    if (!RecordEntry(depfile, start_time, end_time, restat_mtime, command_hash))
+      return false;
   }
   return true;
 }
@@ -344,6 +335,27 @@ BuildLog::LogEntry* BuildLog::LookupByOutput(const string& path) {
   if (i != entries_.end())
     return i->second;
   return NULL;
+}
+
+bool BuildLog::RecordEntry(const string& path, int start_time, int end_time,
+                  TimeStamp restat_mtime, uint64_t command_hash) {
+  Entries::iterator i = entries_.find(path);
+  LogEntry* log_entry;
+  if (i != entries_.end()) {
+    log_entry = i->second;
+  } else {
+    log_entry = new LogEntry(path);
+    entries_.insert(Entries::value_type(log_entry->output, log_entry));
+  }
+  log_entry->command_hash = command_hash;
+  log_entry->start_time = start_time;
+  log_entry->end_time = end_time;
+  log_entry->restat_mtime = restat_mtime;
+
+  if (log_file_)
+    if (!WriteEntry(log_file_, *log_entry))
+      return false;
+  return true;
 }
 
 bool BuildLog::WriteEntry(FILE* f, const LogEntry& entry) {

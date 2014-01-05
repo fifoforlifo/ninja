@@ -85,6 +85,10 @@ struct BuildLog {
   /// Lookup a previously-run command by its output path.
   LogEntry* LookupByOutput(const string& path);
 
+  /// Serialize an entry into a log file.  (thing wrapper on WriteEntry)
+  bool RecordEntry(const string& path, int start_time, int end_time,
+                   TimeStamp restat_mtime, uint64_t command_hash);
+
   /// Serialize an entry into a log file.
   bool WriteEntry(FILE* f, const LogEntry& entry);
 
