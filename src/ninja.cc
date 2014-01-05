@@ -70,13 +70,16 @@ struct Options {
 /// to poke into these, so store them as fields on an object.
 struct NinjaMain : public BuildLogUser {
   NinjaMain(const char* ninja_command, const BuildConfig& config) :
-      ninja_command_(ninja_command), config_(config) {}
+      ninja_command_(ninja_command), config_(config),
+      rm_abandoned_outputs_(true) {}
 
   /// Command line used to run Ninja.
   const char* ninja_command_;
 
   /// Build configuration set from flags (e.g. parallelism).
   const BuildConfig& config_;
+
+  bool rm_abandoned_outputs_;
 
   /// Loaded state (rules, nodes).
   State state_;
@@ -116,7 +119,7 @@ struct NinjaMain : public BuildLogUser {
 
   /// Open the build log.
   /// @return false on error.
-  bool OpenBuildLog(bool recompact_only = false);
+  bool OpenBuildLog(bool recompact_only = false, bool recompact = false);
 
   /// Open the deps log: load it, then open for writing.
   /// @return false on error.
@@ -131,6 +134,9 @@ struct NinjaMain : public BuildLogUser {
   /// @return true if the manifest was rebuilt.
   bool RebuildManifest(const char* input_file, string* err);
 
+  bool RemoveAbandonedOutputsIfNeeded(
+    const char* input_file, TimeStamp log_mtime);
+
   /// Build the targets listed on the command line.
   /// @return an exit code.
   int RunBuild(int argc, char** argv);
@@ -138,7 +144,15 @@ struct NinjaMain : public BuildLogUser {
   /// Dump the output requested by '-d stats'.
   void DumpMetrics();
 
-  virtual bool IsPathDead(StringPiece s) {
+  string GetLogPath() const {
+    string log_path = ".ninja_log";
+    if (!build_dir_.empty())
+      log_path = build_dir_ + "/" + log_path;
+    return log_path;
+  }
+
+
+  virtual FileRefStatus IsPathDead(StringPiece s) {
     Node* n = state_.LookupNode(s);
     // Just checking n isn't enough: If an old output is both in the build log
     // and in the deps log, it will have a Node object in state_.  (It will also
@@ -147,7 +161,19 @@ struct NinjaMain : public BuildLogUser {
     // edge is rare, and the first recompaction will delete all old outputs from
     // the deps log, and then a second recompaction will clear the build log,
     // which seems good enough for this corner case.)
-    return !n || !n->in_edge();
+    if (!n)
+      return FILE_ABANDONED_OUTPUT;
+    if (!n->in_edge())
+      return FILE_ABANDONED_INPUT;
+    return FILE_STILL_REFERENCED;
+  }
+
+  virtual bool DeleteDeadOutputsNeeded() const {
+    return rm_abandoned_outputs_;
+  }
+
+  virtual void RemoveFile(const string& path) {
+    disk_interface_.RemoveFile(path);
   }
 };
 
@@ -782,10 +808,8 @@ bool DebugEnable(const string& name) {
   }
 }
 
-bool NinjaMain::OpenBuildLog(bool recompact_only) {
-  string log_path = ".ninja_log";
-  if (!build_dir_.empty())
-    log_path = build_dir_ + "/" + log_path;
+bool NinjaMain::OpenBuildLog(bool recompact_only, bool recompact) {
+  string log_path = GetLogPath();
 
   string err;
   if (!build_log_.Load(log_path, &err)) {
@@ -798,11 +822,12 @@ bool NinjaMain::OpenBuildLog(bool recompact_only) {
     err.clear();
   }
 
-  if (recompact_only) {
+  if (recompact || recompact_only) {
     bool success = build_log_.Recompact(log_path, *this, &err);
     if (!success)
       Error("failed recompaction: %s", err.c_str());
-    return success;
+    if (!success || recompact_only)
+      return success;
   }
 
   if (!config_.dry_run) {
@@ -870,6 +895,18 @@ bool NinjaMain::EnsureBuildDirExists() {
     }
   }
   return true;
+}
+
+bool NinjaMain::RemoveAbandonedOutputsIfNeeded(
+      const char* input_file, TimeStamp log_mtime) {
+  if (!rm_abandoned_outputs_)
+    return true;
+
+  TimeStamp input_mtime = disk_interface_.Stat(input_file);
+  if (input_mtime <= log_mtime)
+    return true;
+
+  return OpenBuildLog(false, true); // force recompaction
 }
 
 int NinjaMain::RunBuild(int argc, char** argv) {
@@ -1046,10 +1083,16 @@ int real_main(int argc, char** argv) {
     }
   }
 
+  TimeStamp log_mtime = 0;
+
   // The build can take up to 2 passes: one to rebuild the manifest, then
   // another to build the desired target.
   for (int cycle = 0; cycle < 2; ++cycle) {
     NinjaMain ninja(ninja_command, config);
+
+    // Capture old log_mtime *before* BuildLog::OpenForWrite() updates it.
+    if (!log_mtime)
+      log_mtime = ninja.disk_interface_.Stat(ninja.GetLogPath());
 
     RealFileReader file_reader;
     ManifestParser parser(&ninja.state_, &file_reader);
@@ -1082,6 +1125,8 @@ int real_main(int argc, char** argv) {
         return 1;
       }
     }
+
+    ninja.RemoveAbandonedOutputsIfNeeded(options.input_file, log_mtime);
 
     int result = ninja.RunBuild(argc, argv);
     if (g_metrics)

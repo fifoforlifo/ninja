@@ -435,7 +435,7 @@ struct BuildTest : public StateTestWithBuiltinRules, public BuildLogUser {
     builder_.command_runner_.release();
   }
 
-  virtual bool IsPathDead(StringPiece s) { return false; }
+  virtual FileRefStatus IsPathDead(StringPiece s) { return FILE_STILL_REFERENCED; }
 
   /// Rebuild target in the 'working tree' (fs_).
   /// State of command_runner_ and logs contents (if specified) ARE MODIFIED.

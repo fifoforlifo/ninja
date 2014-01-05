@@ -25,11 +25,19 @@ using namespace std;
 
 struct Edge;
 
+enum FileRefStatus {
+  FILE_STILL_REFERENCED = 0,
+  FILE_ABANDONED_OUTPUT,
+  FILE_ABANDONED_INPUT
+};
+
 /// Can answer questions about the manifest for the BuildLog.
 struct BuildLogUser {
   /// Return if a given output no longer part of the build manifest.
   /// This is only called during recompaction and doesn't have to be fast.
-  virtual bool IsPathDead(StringPiece s) = 0;
+  virtual FileRefStatus IsPathDead(StringPiece s) = 0;
+  virtual bool DeleteDeadOutputsNeeded() const { return false; }
+  virtual void RemoveFile(const string& path) {}
 };
 
 /// Store a log of every command ran for every build.

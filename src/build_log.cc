@@ -115,6 +115,7 @@ bool BuildLog::OpenForWrite(const string& path, BuildLogUser& user,
       return false;
   }
 
+  Close();
   log_file_ = fopen(path.c_str(), "ab");
   if (!log_file_) {
     *err = strerror(errno);
@@ -369,10 +370,14 @@ bool BuildLog::Recompact(const string& path, BuildLogUser& user, string* err) {
     return false;
   }
 
+  const bool delete_dead_outputs = user.DeleteDeadOutputsNeeded();
   vector<StringPiece> dead_outputs;
   for (Entries::iterator i = entries_.begin(); i != entries_.end(); ++i) {
-    if (user.IsPathDead(i->first)) {
+    FileRefStatus ref_status = user.IsPathDead(i->first);
+    if (ref_status != FILE_STILL_REFERENCED) {
       dead_outputs.push_back(i->first);
+      if (ref_status == FILE_ABANDONED_OUTPUT && delete_dead_outputs)
+        user.RemoveFile(i->first.AsString());
       continue;
     }
 
@@ -397,5 +402,6 @@ bool BuildLog::Recompact(const string& path, BuildLogUser& user, string* err) {
     return false;
   }
 
+  needs_recompaction_ = false;
   return true;
 }

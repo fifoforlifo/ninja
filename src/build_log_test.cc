@@ -38,7 +38,7 @@ struct BuildLogTest : public StateTestWithBuiltinRules, public BuildLogUser {
   virtual void TearDown() {
     unlink(kTestFilename);
   }
-  virtual bool IsPathDead(StringPiece s) { return false; }
+  virtual FileRefStatus IsPathDead(StringPiece s) { return FILE_STILL_REFERENCED; }
 };
 
 TEST_F(BuildLogTest, WriteRead) {
@@ -263,7 +263,9 @@ TEST_F(BuildLogTest, MultiTargetEdge) {
 }
 
 struct BuildLogRecompactTest : public BuildLogTest {
-  virtual bool IsPathDead(StringPiece s) { return s == "out2"; }
+  virtual FileRefStatus IsPathDead(StringPiece s) {
+    return s == "out2" ? FILE_ABANDONED_OUTPUT : FILE_STILL_REFERENCED;
+  }
 };
 
 TEST_F(BuildLogRecompactTest, Recompact) {

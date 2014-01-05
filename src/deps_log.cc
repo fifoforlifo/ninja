@@ -402,5 +402,6 @@ bool DepsLog::RecordId(Node* node) {
   node->set_id(id);
   nodes_.push_back(node);
 
+  needs_recompaction_ = false;
   return true;
 }
