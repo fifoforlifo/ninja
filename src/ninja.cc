@@ -64,6 +64,8 @@ struct Options {
 
   /// Tool to run rather than building.
   const Tool* tool;
+
+  bool rm_abandoned_outputs;
 };
 
 /// The Ninja main() loads up a series of data structures; various tools need
@@ -71,7 +73,7 @@ struct Options {
 struct NinjaMain : public BuildLogUser {
   NinjaMain(const char* ninja_command, const BuildConfig& config) :
       ninja_command_(ninja_command), config_(config),
-      rm_abandoned_outputs_(true) {}
+      rm_abandoned_outputs_(false) {}
 
   /// Command line used to run Ninja.
   const char* ninja_command_;
@@ -174,6 +176,11 @@ struct NinjaMain : public BuildLogUser {
 
   virtual void RemoveFile(const string& path) {
     disk_interface_.RemoveFile(path);
+  }
+
+  virtual bool IsDryRun() const { return config_.dry_run; }
+  virtual bool IsVerbose() const {
+    return config_.verbosity == BuildConfig::VERBOSE;
   }
 };
 
@@ -974,6 +981,7 @@ int ExceptionFilter(unsigned int code, struct _EXCEPTION_POINTERS *ep) {
 int ReadFlags(int* argc, char*** argv,
               Options* options, BuildConfig* config) {
   config->parallelism = GuessParallelism();
+  options->rm_abandoned_outputs = !!getenv("NINJA_RAO");
 
   enum { OPT_VERSION = 1 };
   const option kLongOptions[] = {
@@ -984,7 +992,7 @@ int ReadFlags(int* argc, char*** argv,
 
   int opt;
   while (!options->tool &&
-         (opt = getopt_long(*argc, *argv, "d:f:j:k:l:nt:vC:h", kLongOptions,
+         (opt = getopt_long(*argc, *argv, "d:f:j:k:l:nt:vC:r::h", kLongOptions,
                             NULL)) != -1) {
     switch (opt) {
       case 'd':
@@ -1036,6 +1044,20 @@ int ReadFlags(int* argc, char*** argv,
       case 'C':
         options->working_dir = optarg;
         break;
+      case 'r': {
+        if (!optarg) {
+          options->rm_abandoned_outputs = true;
+          break;
+        }
+        char* end;
+        int value = strtol(optarg, &end, 10);
+        if (*end != 0)
+          Fatal("-r parameter not numeric; did you mean -r 0?");
+        if (value != 0 && value != 1)
+          Fatal("-r parameter must be 0 or 1 if supplied");
+        options->rm_abandoned_outputs = !!value;
+        break;
+      }
       case OPT_VERSION:
         printf("%s\n", kNinjaVersion);
         return 0;
@@ -1089,6 +1111,7 @@ int real_main(int argc, char** argv) {
   // another to build the desired target.
   for (int cycle = 0; cycle < 2; ++cycle) {
     NinjaMain ninja(ninja_command, config);
+    ninja.rm_abandoned_outputs_ = options.rm_abandoned_outputs;
 
     // Capture old log_mtime *before* BuildLog::OpenForWrite() updates it.
     if (!log_mtime)

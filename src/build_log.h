@@ -38,6 +38,8 @@ struct BuildLogUser {
   virtual FileRefStatus IsPathDead(StringPiece s) = 0;
   virtual bool DeleteDeadOutputsNeeded() const { return false; }
   virtual void RemoveFile(const string& path) {}
+  virtual bool IsDryRun() const { return false; }
+  virtual bool IsVerbose() const { return false; }
 };
 
 /// Store a log of every command ran for every build.

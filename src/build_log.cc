@@ -354,7 +354,11 @@ bool BuildLog::WriteEntry(FILE* f, const LogEntry& entry) {
 
 bool BuildLog::Recompact(const string& path, BuildLogUser& user, string* err) {
   METRIC_RECORD(".ninja_log recompact");
-  printf("Recompacting log...\n");
+
+  const bool dry_run = user.IsDryRun();
+  const bool verbose = user.IsVerbose();
+  if (verbose)
+    printf("ninja: Recompacting log...\n");
 
   Close();
   string temp_path = path + ".recompact";
@@ -371,13 +375,18 @@ bool BuildLog::Recompact(const string& path, BuildLogUser& user, string* err) {
   }
 
   const bool delete_dead_outputs = user.DeleteDeadOutputsNeeded();
-  vector<StringPiece> dead_outputs;
+  vector<Entries::iterator> dead_outputs;
   for (Entries::iterator i = entries_.begin(); i != entries_.end(); ++i) {
     FileRefStatus ref_status = user.IsPathDead(i->first);
     if (ref_status != FILE_STILL_REFERENCED) {
-      dead_outputs.push_back(i->first);
-      if (ref_status == FILE_ABANDONED_OUTPUT && delete_dead_outputs)
-        user.RemoveFile(i->first.AsString());
+      dead_outputs.push_back(i);
+      if (ref_status == FILE_ABANDONED_OUTPUT && delete_dead_outputs) {
+        const string& path = i->second->output;
+        if (verbose)
+          printf("ninja: reaping %s\n", path.c_str());
+        if (!dry_run)
+          user.RemoveFile(path);
+      }
       continue;
     }
 
@@ -388,8 +397,11 @@ bool BuildLog::Recompact(const string& path, BuildLogUser& user, string* err) {
     }
   }
 
-  for (size_t i = 0; i < dead_outputs.size(); ++i)
+  for (size_t i = 0; i < dead_outputs.size(); ++i) {
+    LogEntry* entry = dead_outputs[i]->second;
     entries_.erase(dead_outputs[i]);
+    delete entry;
+  }
 
   fclose(f);
   if (unlink(path.c_str()) < 0) {
@@ -397,11 +409,16 @@ bool BuildLog::Recompact(const string& path, BuildLogUser& user, string* err) {
     return false;
   }
 
-  if (rename(temp_path.c_str(), path.c_str()) < 0) {
-    *err = strerror(errno);
-    return false;
+  if (!dry_run) {
+    if (rename(temp_path.c_str(), path.c_str()) < 0) {
+      *err = strerror(errno);
+      return false;
+    }
+    needs_recompaction_ = false;
+  }
+  else {
+    unlink(temp_path.c_str());
   }
 
-  needs_recompaction_ = false;
   return true;
 }
